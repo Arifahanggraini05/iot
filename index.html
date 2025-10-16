@@ -163,19 +163,19 @@
   function stopCamera(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } video.srcObject=null; }
 
   // ===== Wemos Client
-  async function callLED(state){
-    const base=(espUrlEl.value||'').replace(/\/+$/,''); if(!base) return;
-    const key=espKeyEl.value||'';
-    try{
-      const r=await fetch(base+'/api/led', {
-        method:'POST',
-        headers:{'Content-Type':'application/json','X-API-Key':key},
-        body:JSON.stringify({state})
-      });
-      const j=await r.json().catch(()=>({}));
-      log(`LED ${state}:`, r.status, j.message||'');
-    }catch(e){ log('LED call error:', e); }
-  }
+  async function callLED(state) {
+  const base = (espUrlEl.value || '').replace(/\/+$/, '');
+  const key = espKeyEl.value || '';
+  if (!base) return;
+  try {
+    const url = ${base}/api/led?state=${state}&key=${key};
+    const r = await fetch(url);
+    const text = await r.text();
+    log(LED ${state.toUpperCase()}:, r.status, text);
+  } catch (e) {
+    log('LED call error:', e);
+  }
+}
 
   // Debounce / cooldown biar nggak spam
   let lastTrigger=0;
