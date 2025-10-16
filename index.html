@@ -86,8 +86,8 @@
     <!-- ===== WEMOS API CONFIG ===== -->
     <div class="row" style="margin-top:12px">
       <div style="min-width:260px">
-        <label>URL Wemos (mis: http://192.168.43.132)</label>
-        <input id="espUrl" placeholder="http://192.168.43.132" value="http://192.168.43.132">
+        <label>URL Wemos (mis: http://192.168.1.11)</label>
+        <input id="espUrl" placeholder="http://192.168.1.11" value="http://10.142.145.181">
       </div>
       <div style="min-width:200px">
         <label>API Key</label>
@@ -156,7 +156,7 @@
   }
 
   // ===== Camera
-  async function fillCameraList(){ const devices=await navigator.mediaDevices.enumerateDevices(); const cams=devices.filter(d=>d.kind==='videoinput'); camSel.innerHTML=''; cams.forEach((d,i)=>{const o=document.createElement('option'); o.value=d.deviceId; o.textContent=d.label||`Kamera ${i+1}`; camSel.appendChild(o);}); }
+  async function fillCameraList(){ const devices=await navigator.mediaDevices.enumerateDevices(); const cams=devices.filter(d=>d.kind==='videoinput'); camSel.innerHTML=''; cams.forEach((d,i)=>{const o=document.createElement('option'); o.value=d.deviceId; o.textContent=d.label||Kamera ${i+1}; camSel.appendChild(o);}); }
   function parseSize(v){ const [w,h]=v.split('x').map(n=>parseInt(n,10)); return {w,h}; }
   function setCanvasSize(v){ const {w,h}=parseSize(v); canvas.width=w; canvas.height=h; }
   async function startCamera(){ const devId=camSel.value||undefined; const {w,h}=parseSize(sizeEl.value); const c={video:devId?{deviceId:{exact:devId},width:{ideal:w},height:{ideal:h}}:{width:{ideal:w},height:{ideal:h}},audio:false}; stream=await navigator.mediaDevices.getUserMedia(c); video.srcObject=stream; await video.play(); await new Promise(res=>{ const done=()=>res(); if(video.readyState>=2 && video.videoWidth>0) return res(); video.onloadedmetadata=done; video.onplaying=done; setTimeout(done,3000); }); if(navigator.mediaDevices?.enumerateDevices){ try{ await fillCameraList(); }catch{} } }
@@ -173,8 +173,8 @@
     const text = await r.text();
     log(LED ${state.toUpperCase()}:, r.status, text);
   } catch (e) {
-    log('LED call error:', e);
-  }
+    log('LED call error:', e);
+  }
 }
 
   // Debounce / cooldown biar nggak spam
@@ -194,7 +194,7 @@
   btnT.onclick = ()=>{ running=false; cancelAnimationFrame(rafId); rafId=null; stopCamera(); btnS.disabled=false; btnT.disabled=true; statusEl.textContent='Status: stopped'; };
   showVideoCb.onchange = ()=>{ video.style.display = showVideoCb.checked?'block':'none'; };
 
-  btnEnroll.onclick = ()=>{ const nm=(nameEl.value||'').trim(); if(!nm){ alert('Isi nama.'); return; } enrolling=true; enrollLeft=parseInt(samplesEl.value,10)||20; enrollSum=new Float32Array(256); statusEl.textContent=`Enroll "${nm}" — ambil ${enrollLeft} sampel…`; };
+  btnEnroll.onclick = ()=>{ const nm=(nameEl.value||'').trim(); if(!nm){ alert('Isi nama.'); return; } enrolling=true; enrollLeft=parseInt(samplesEl.value,10)||20; enrollSum=new Float32Array(256); statusEl.textContent=Enroll "${nm}" — ambil ${enrollLeft} sampel…; };
   btnClear.onclick = ()=>{ clearDB(); alert('DB cleared.'); };
   btnExport.onclick = ()=>{ const blob=new Blob([JSON.stringify(loadDB(),null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='face_db.json'; a.click(); };
   inImport.onchange = async e=>{ const f=e.target.files[0]; if(!f) return; const txt=await f.text(); try{ const obj=JSON.parse(txt); if(!obj||!Array.isArray(obj.labels)) throw 0; localStorage.setItem(DB_KEY, JSON.stringify(obj)); alert('Import ok.'); }catch{ alert('File JSON tidak valid.'); } };
@@ -202,21 +202,26 @@
   btnTestOn.onclick = ()=>callLED('on');
   btnTestOff.onclick = ()=>callLED('off');
 
-  // ===== Main loop (detect+recognize+trigger)
+  // ===== Main loop (detect+recognize+trigger) - DIPERBAIKI
   function startLoop(){
-    rgba && rgba.delete(); gray && gray.delete();
-    rgba=new cv.Mat(canvas.height,canvas.width,cv.CV_8UC4);
-    gray=new cv.Mat();
-    const faces=new cv.RectVector();
+    // Inisialisasi matriks sekali saja
+    if(!rgba) rgba = new cv.Mat(canvas.height, canvas.width, cv.CV_8UC4);
+    if(!gray) gray = new cv.Mat();
+    
+    const faces = new cv.RectVector();
     procFPS=0; lastFPS=performance.now(); procCount=0; frameIndex=0;
 
     const step=()=>{
-      if(!running){ rgba.delete(); gray.delete(); faces.delete(); return; }
+      if(!running){
+        // Hanya bersihkan resources saat benar-benar berhenti
+        return;
+      }
 
       if(video.readyState>=2 && video.videoWidth>0){
         try{
           ctx.drawImage(video,0,0,canvas.width,canvas.height);
           frameIndex++;
+          
           if(frameIndex % detectEveryN === 0){
             const data=ctx.getImageData(0,0,canvas.width,canvas.height);
             rgba.data.set(data.data);
@@ -225,59 +230,130 @@
             classifier.detectMultiScale(gray,faces,1.1,5,0,new cv.Size(60,60));
             facesCount=faces.size();
 
-            let displayText='';
-            if(faces.size()>0){
-              // pilih wajah terbesar
-              let bi=0, ba=0;
-              for(let i=0;i<faces.size();i++){ const r=faces.get(i), a=r.width*r.height; if(a>ba){ba=a; bi=i;} }
-              const r=faces.get(bi);
-              // ROI -> 100x100
+            // Proses semua wajah yang terdeteksi
+            const faceResults = [];
+            
+            for(let i=0; i<faces.size(); i++){
+              const r=faces.get(i);
               let roi=gray.roi(r), res=new cv.Mat();
               cv.resize(roi,res,new cv.Size(LBP_SIZE,LBP_SIZE),0,0,cv.INTER_AREA);
               const desc=lbpHistFromBytes(res.data,res.cols,res.rows);
 
+              let displayText='';
               if(enrolling){
-                addInPlace(enrollSum,desc); enrollLeft--; statusEl.textContent=`Enroll "${nameEl.value.trim()}" — tersisa ${enrollLeft}`;
-                if(enrollLeft<=0){
-                  scaleInPlace(enrollSum,1/parseInt(samplesEl.value,10));
-                  const db=loadDB(); db.labels=db.labels.filter(x=>x.name===nameEl.value.trim()?false:true); db.labels.push({name:nameEl.value.trim(), vec:Array.from(enrollSum)}); saveDB(db);
-                  enrolling=false; statusEl.textContent=`Enroll selesai untuk "${nameEl.value.trim()}".`;
+                // Jika sedang enroll, gunakan wajah terbesar saja
+                if(i === 0) { // Gunakan index 0 sebagai wajah terbesar
+                  addInPlace(enrollSum,desc); 
+                  enrollLeft--; 
+                  statusEl.textContent=Enroll "${nameEl.value.trim()}" — tersisa ${enrollLeft};
+                  if(enrollLeft<=0){
+                    scaleInPlace(enrollSum,1/parseInt(samplesEl.value,10));
+                    const db=loadDB(); 
+                    db.labels=db.labels.filter(x=>x.name===nameEl.value.trim()?false:true); 
+                    db.labels.push({name:nameEl.value.trim(), vec:Array.from(enrollSum)}); 
+                    saveDB(db);
+                    enrolling=false; 
+                    statusEl.textContent=Enroll selesai untuk "${nameEl.value.trim()}".;
+                  }
                 }
               }else{
-                const db=loadDB(); const match=bestMatch(desc,db); const thr=parseFloat(thEl.value)||0.9;
-                if(match.score>=thr){ displayText=`${match.name} (${match.score.toFixed(2)})`; triggerOnVerified(); }
-                else { displayText=`Unknown (${match.score.toFixed(2)})`; }
+                // Untuk semua wajah, lakukan pengenalan
+                const db=loadDB(); 
+                const match=bestMatch(desc,db); 
+                const thr=parseFloat(thEl.value)||0.9;
+                if(match.score>=thr){ 
+                  displayText=${match.name} (${match.score.toFixed(2)}); 
+                  // Hanya trigger untuk wajah pertama yang dikenali
+                  if(i === 0) triggerOnVerified();
+                }
+                else { 
+                  displayText=Unknown (${match.score.toFixed(2)}); 
+                }
               }
 
-              // draw faces
-              ctx.lineWidth=Math.max(2,Math.round(canvas.width/200));
-              for(let i=0;i<faces.size();i++){ const rr=faces.get(i); ctx.strokeStyle=i===bi?'#00ff66':'#66a3ff'; ctx.strokeRect(rr.x,rr.y,rr.width,rr.height); }
-              if(displayText){ const rr=faces.get(bi); ctx.fillStyle='rgba(0,0,0,.5)'; const w=ctx.measureText(displayText).width+14; ctx.fillRect(rr.x, rr.y-22, w, 20); ctx.fillStyle='#fff'; ctx.fillText(displayText, rr.x+7, rr.y-7); }
-              roi.delete(); res.delete();
+              faceResults.push({
+                rect: r,
+                text: displayText,
+                isMain: i === 0 // Wajah utama untuk enrollment
+              });
+
+              roi.delete(); 
+              res.delete();
+            }
+
+            // Gambar semua wajah dan teks
+            ctx.lineWidth=Math.max(2,Math.round(canvas.width/200));
+            for(let i=0; i<faceResults.length; i++){
+              const {rect, text, isMain} = faceResults[i];
+              ctx.strokeStyle=isMain?'#00ff66':'#66a3ff';
+              ctx.strokeRect(rect.x,rect.y,rect.width,rect.height);
+              
+              if(text){
+                ctx.fillStyle='rgba(0,0,0,.5)';
+                const w=ctx.measureText(text).width+14;
+                ctx.fillRect(rect.x, rect.y-22, w, 20);
+                ctx.fillStyle='#fff';
+                ctx.fillText(text, rect.x+7, rect.y-7);
+              }
             }
 
             // FPS
-            procCount++; const now=performance.now(); if(now-lastFPS>1000){ procFPS=procCount/((now-lastFPS)/1000); procCount=0; lastFPS=now; }
+            procCount++; 
+            const now=performance.now(); 
+            if(now-lastFPS>1000){ 
+              procFPS=procCount/((now-lastFPS)/1000); 
+              procCount=0; 
+              lastFPS=now; 
+            }
           }
-        }catch(e){ log(e); }
+        }catch(e){ 
+          log('Error in processing:', e); 
+        }
       }
 
       drawHUD();
-      schedule();
+      
+      // Gunakan requestAnimationFrame secara konsisten
+      if(running) rafId = requestAnimationFrame(step);
     };
 
-    const schedule=()=>{ if("requestVideoFrameCallback" in HTMLVideoElement.prototype){ video.requestVideoFrameCallback(()=>{ step(); }); } else { rafId=requestAnimationFrame(step); } };
-    schedule();
+    // Mulai loop
+    rafId = requestAnimationFrame(step);
   }
 
   function drawHUD(){
-    const pad=10,line=18; const t1=`FPS: ${Math.round(procFPS)}`, t2=`Faces: ${facesCount}`, t3=enrolling?`Enrolling: ${nameEl.value.trim()} (${enrollLeft} left)`:'';
-    ctx.save(); ctx.font='14px system-ui,Segoe UI,Roboto,Arial';
-    const w=Math.max(ctx.measureText(t1).width,ctx.measureText(t2).width,ctx.measureText(t3).width)+pad*2; const lines=enrolling?3:2; const h=lines*line+pad*2;
-    ctx.fillStyle='rgba(0,0,0,.35)'; ctx.fillRect(pad,pad,w,h);
-    ctx.fillStyle='#e6eef6'; ctx.fillText(t1,pad*2,pad+line); ctx.fillText(t2,pad*2,pad+line*2); if(enrolling) ctx.fillText(t3,pad*2,pad+line*3);
+    const pad=10,line=18; 
+    const t1=FPS: ${Math.round(procFPS)}, 
+          t2=Faces: ${facesCount}, 
+          t3=enrolling?Enrolling: ${nameEl.value.trim()} (${enrollLeft} left):'';
+    
+    ctx.save(); 
+    ctx.font='14px system-ui,Segoe UI,Roboto,Arial';
+    
+    const w=Math.max(
+      ctx.measureText(t1).width,
+      ctx.measureText(t2).width,
+      ctx.measureText(t3).width
+    ) + pad*2; 
+    
+    const lines=enrolling?3:2; 
+    const h=lines*line+pad*2;
+    
+    ctx.fillStyle='rgba(0,0,0,.35)'; 
+    ctx.fillRect(pad,pad,w,h);
+    ctx.fillStyle='#e6eef6'; 
+    ctx.fillText(t1,pad*2,pad+line); 
+    ctx.fillText(t2,pad*2,pad+line*2); 
+    if(enrolling) ctx.fillText(t3,pad*2,pad+line*3);
     ctx.restore();
   }
+
+  // Cleanup saat halaman ditutup
+  window.addEventListener('beforeunload', () => {
+    if(rgba) rgba.delete();
+    if(gray) gray.delete();
+    if(classifier) classifier.delete();
+  });
 
   if(navigator.mediaDevices?.enumerateDevices) fillCameraList().catch(()=>{});
   </script>
